@@ -5,7 +5,8 @@ from django.shortcuts import render, HttpResponse
 from django.template import Context
 from django.template.loader import get_template
 from django.views.generic import ListView
-
+import task_learn.settings as settings
+import multiprocessing,paramiko
 from taskmanapp.models import *
 from taskmanapp.linux_disk_partitions import disk_linux_partitions
 from taskmanapp.linux_disk_usage import disk_usage_linux
@@ -35,6 +36,14 @@ def getMemInfo(request):
     return HttpResponse(
         '{"total_mem":%s,"used_mem": %s,"free_mem":%s}' % (total_mem, used_mem_percentage, free_mem_percentage))
 
+def getDiskioData(request):
+    diskioinfo = psutil.disk_io_counters(perdisk=True)
+	disk_list = []
+    for d in diskioinfo.keys():
+		disk_list.append(d)
+    print '{"disk_list":%s}' % (disk_list)
+    return HttpResponse(
+        '{"disk_list":%s}' % (disk_list))
 
 def getDiskInfo(request,disk_name):
     partition_list = []
@@ -58,7 +67,6 @@ def getDiskInfo(request,disk_name):
     elif platform_type.startswith("Linux"):
         disk_used = disk_usage_linux(disk_name).split('%')[0]
         disk_free = 100 - int(disk_used)
-    print 'platform_type',platform_type,partition_info,disk_name
     disk_name = '\"' + disk_name + '\"'
     return HttpResponse('{"disk_name":%s,"disk_used": %s,"disk_free":%s}' % (disk_name, disk_used, disk_free))
 
@@ -70,9 +78,30 @@ def file_transfer(request):
 
 
 def command_execution(request):
+    hosts_list = Hosts.objects.all()
     t = get_template('command_execution.html')
     # html=t.render(Context({'form_name':'Enter your command:'}))
-    html = t.render(Context({'user': request.user}))
+    html = t.render(Context({'user': request.user,'hosts_list':hosts_list}))
+    if request.method == "POST":
+		s = paramiko.SSHClient()
+		s.load_system_host_keys()
+		s.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+		host_string = request.POST.get("server_list")
+		cmd = request.POST.get("command_exe")
+		print cmd
+		host_list = host_string.split('\n')
+		for item in host_list: 
+			host = Hosts.objects.get(ip_addr=item.strip())
+			port = host.port
+			bind_user = BindHosts.objects.get(host=host)
+			username = bind_user.host_user.username
+			password = bind_user.host_user.password
+			s.connect(item,int(port),username,password,timeout=5)
+			stdin,stdout,stderr = s.exec_command(cmd)
+			result = stdout.read(),stderr.read()
+			print result
+			
+		Pool = multiprocessing.Pool(processes=settings.MaxTaskProcesses)
     return HttpResponse(html)
 
 
